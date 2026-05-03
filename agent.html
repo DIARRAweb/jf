@@ -381,69 +381,44 @@ return;
 }
 
 let amount = parseFloat(prompt("Montant retrait ?"));
-let pass = prompt("🔐 Entre ton mot de passe");
 
-// vérifier mot de passe
-const agentSnapCheck = await get(ref(db,"agents/"+agent.phone));
-let agentDataCheck = agentSnapCheck.val();
-
-if(pass !== agentDataCheck.password){
-alert("❌ Mot de passe incorrect");
-return;
-}
 if(!amount || amount <= 0){
 alert("Montant invalide");
 return;
 }
 
 const agentRef = ref(db,"agents/"+agent.phone);
-const userRef = ref(db,"users/"+scannedUser);
-
 const agentSnap = await get(agentRef);
-const userSnap = await get(userRef);
-
 let agentData = agentSnap.val();
-let userData = userSnap.val();
 
 // 🔥 INIT
 if(!agentData.activityUsed) agentData.activityUsed = 0;
+if(!agentData.pendingActivity) agentData.pendingActivity = 0;
 
-// 🔥 VERIF USER
-if(userData.solde < amount){
-alert("❌ Solde utilisateur insuffisant");
-return;
-}
-
-// 🔥 VERIF PLAFOND
-if((agentData.activityUsed + amount) > agentData.plafond){
+// 🔥 VERIF PLAFOND (ULTRA PRO)
+if((agentData.activityUsed + agentData.pendingActivity + amount) > agentData.plafond){
 alert("❌ Limite d'activité atteinte !");
 return;
 }
 
-// 🔥 LOGIQUE
-userData.solde -= amount;
-agentData.solde += amount;
-agentData.activityUsed += amount;
+// 🔥 réserver plafond
+agentData.pendingActivity += amount;
 
-await update(userRef,userData);
 await update(agentRef,{
-solde:agentData.solde,
-activityUsed:agentData.activityUsed
+pendingActivity: agentData.pendingActivity
 });
 
-// 🔥 TRANSACTION
-await push(ref(db,"transactions"),{
-phone: scannedUser,
-type: "Retrait",
-amount: -amount,
+// 🔥 envoyer demande au user
+await push(ref(db,"withdrawRequests/"+scannedUser),{
 agent: agent.phone,
+fromAgent: agent.phone,
+amount: amount,
+fees: 0,
+status: "pending",
 date: new Date().toLocaleString()
 });
 
-alert("✅ Retrait validé");
-
-loadAgentBalance();
-loadMiniHistory();
+alert("📩 Demande envoyée à l'utilisateur");
 };
 </script>
 
