@@ -187,16 +187,20 @@ async function loadAgentBalance(){
 const snap = await get(ref(db,"agents/"+agent.phone));
 
 if(snap.exists()){
-    document.getElementById("agentName").innerText =
+const data = snap.val(); // ✅ d'abord
+
+// 🔥 afficher nom agent
+document.getElementById("agentName").innerText =
 "👨‍💼 " + (data.name || "Agent");
-const data = snap.val();
 
 // 🔥 sécurité
 if(!data.activityUsed) data.activityUsed = 0;
 
+// 🔥 solde
 document.getElementById("agentBalance").innerText =
-Number(data.solde).toLocaleString() + " FCFA";
+Number(data.solde || 0).toLocaleString() + " FCFA";
 
+// 🔥 plafond
 document.getElementById("agentLimit").innerText =
 "📊 " + data.activityUsed + " / " + data.plafond + " FCFA";
 }
@@ -205,11 +209,17 @@ document.getElementById("agentLimit").innerText =
 loadAgentBalance();
 loadMiniHistory();
 
+let notifShown = false;
+
 onValue(ref(db,"notifications/"+agent.phone), snap=>{
 if(!snap.exists()) return;
 
-let list = Object.values(snap.val()).slice(-3).reverse();
+// 🔥 empêcher répétition
+if(notifShown) return;
 
+notifShown = true;
+
+let list = Object.values(snap.val()).slice(-3).reverse();
 let msg = "🔔 Notifications\n\n";
 
 list.forEach(n=>{
@@ -371,6 +381,16 @@ return;
 }
 
 let amount = parseFloat(prompt("Montant retrait ?"));
+let pass = prompt("🔐 Entre ton mot de passe");
+
+// vérifier mot de passe
+const agentSnapCheck = await get(ref(db,"agents/"+agent.phone));
+let agentDataCheck = agentSnapCheck.val();
+
+if(pass !== agentDataCheck.password){
+alert("❌ Mot de passe incorrect");
+return;
+}
 if(!amount || amount <= 0){
 alert("Montant invalide");
 return;
