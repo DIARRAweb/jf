@@ -1,0 +1,431 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta charset="UTF-8">
+<title>Agent MaliPay</title>
+
+<script src="https://www.gstatic.com/firebasejs/12.12.0/firebase-app.js"></script>
+<script src="https://www.gstatic.com/firebasejs/12.12.0/firebase-database.js"></script>
+
+<script src="https://unpkg.com/html5-qrcode"></script>
+
+<style>
+body{
+margin:0;
+font-family:"Segoe UI", sans-serif;
+background: linear-gradient(135deg,#f5f7fa,#e4ecf7);
+display:flex;
+justify-content:center;
+align-items:center;
+height:100vh;
+}
+
+.container{
+width:95%;
+max-width:420px;
+background:white;
+padding:20px;
+border-radius:25px;
+box-shadow:0 20px 50px rgba(0,0,0,0.25);
+text-align:center;
+}
+
+.agent-header h3{
+margin:0;
+color:#333;
+}
+
+.status{
+color:#00c853;
+font-weight:bold;
+margin-bottom:15px;
+}
+
+.balance-card{
+background:linear-gradient(45deg,#ff9a00,#ff3d00);
+color:white;
+padding:20px;
+border-radius:20px;
+margin-bottom:20px;
+box-shadow:0 10px 25px rgba(255,100,0,0.4);
+}
+
+.balance-card h1{
+margin:10px 0 0;
+font-size:26px;
+}
+
+.scanner-box{
+margin:15px 0;
+}
+
+#scanBtn{
+width:100%;
+background:#222;
+color:white;
+padding:12px;
+border-radius:12px;
+margin-bottom:10px;
+}
+
+@keyframes fadeUp{
+from{opacity:0;transform:translateY(20px);}
+to{opacity:1;transform:translateY(0);}
+}
+
+.title{
+font-size:20px;
+font-weight:bold;
+margin-bottom:20px;
+}
+
+#reader{
+width:100%;
+border-radius:15px;
+overflow:hidden;
+margin-bottom:15px;
+}
+
+.actions{
+display:flex;
+gap:10px;
+justify-content:center;
+margin-top:15px;
+}
+
+button{
+flex:1;
+padding:12px;
+border:none;
+border-radius:12px;
+font-weight:bold;
+cursor:pointer;
+font-size:15px;
+transition:0.2s;
+}
+
+.deposit{
+background: linear-gradient(45deg,#00c853,#00e676);
+color:white;
+}
+
+.withdraw{
+background: linear-gradient(45deg,#ff3d00,#ff1744);
+color:white;
+}
+
+button:hover{
+transform:scale(1.05);
+}
+</style>
+</head>
+
+<body>
+
+<div class="container">
+
+<!-- 🔶 HEADER AGENT -->
+<div class="agent-header">
+<h3 id="agentName">👨‍💼 Agent</h3>
+<p class="status">🟢 Actif</p>
+</div>
+
+<!-- 🔶 CARTE SOLDE -->
+<div class="balance-card">
+<p>💼 Solde disponible</p>
+<h1 id="agentBalance">0 FCFA</h1>
+<p id="agentLimit" style="margin-top:5px;font-size:14px;"></p>
+</div>
+
+<!-- 🔶 SCANNER -->
+<div class="scanner-box">
+<button onclick="toggleScanner()" id="scanBtn">📷 Scanner QR</button>
+<div id="reader" style="display:none;"></div>
+<div id="result"></div>
+</div>
+
+<!-- 🔶 ACTIONS -->
+ <div id="miniHistory" style="
+background:#f5f5f5;
+padding:10px;
+border-radius:12px;
+margin-top:15px;
+font-size:13px;
+text-align:left;
+max-height:120px;
+overflow:auto;
+"></div>
+<div class="actions">
+<button class="deposit" onclick="startDeposit()">💰 Dépôt</button>
+<button class="withdraw" onclick="startWithdraw()">💸 Retrait</button>
+</div>
+
+</div>
+
+<script type="module">
+import { initializeApp } from "https://www.gstatic.com/firebasejs/12.12.0/firebase-app.js";
+import { getDatabase, ref, get, update, push, onValue } from "https://www.gstatic.com/firebasejs/12.12.0/firebase-database.js";
+
+const firebaseConfig = {
+apiKey: "AIzaSyB2cVumUWZ_cDUC-kd7FUpUaXEODB1CCNE",
+databaseURL: "https://ma-money5-default-rtdb.firebaseio.com"
+};
+
+const app = initializeApp(firebaseConfig);
+const db = getDatabase(app);
+
+/* ===== AGENT CONNECTÉ ===== */
+let agent = JSON.parse(localStorage.getItem("loggedAgent"));
+
+if(!agent){
+alert("Accès refusé");
+window.location.href="login.html";
+}
+
+async function loadAgentBalance(){
+const snap = await get(ref(db,"agents/"+agent.phone));
+
+if(snap.exists()){
+    document.getElementById("agentName").innerText =
+"👨‍💼 " + (data.name || "Agent");
+const data = snap.val();
+
+// 🔥 sécurité
+if(!data.activityUsed) data.activityUsed = 0;
+
+document.getElementById("agentBalance").innerText =
+Number(data.solde).toLocaleString() + " FCFA";
+
+document.getElementById("agentLimit").innerText =
+"📊 " + data.activityUsed + " / " + data.plafond + " FCFA";
+}
+}
+
+loadAgentBalance();
+loadMiniHistory();
+
+onValue(ref(db,"notifications/"+agent.phone), snap=>{
+if(!snap.exists()) return;
+
+let list = Object.values(snap.val()).slice(-3).reverse();
+
+let msg = "🔔 Notifications\n\n";
+
+list.forEach(n=>{
+msg += n.title + " ("+n.amount+")\n";
+});
+
+alert(msg);
+});
+
+async function loadMiniHistory(){
+const snap = await get(ref(db,"transactions"));
+if(!snap.exists()) return;
+
+let list = [];
+
+snap.forEach(child=>{
+const t = child.val();
+if(t.agent && t.agent === agent.phone){
+list.push(t);
+}
+});
+
+list = list.reverse().slice(0,5);
+
+let html = "📊 Activité récente:<br>";
+
+list.forEach(t=>{
+html += "• "+t.type+" : "+t.amount+"<br>";
+});
+
+document.getElementById("miniHistory").innerHTML = html;
+}
+
+
+/* ===== QR SCAN ===== */
+let scannedUser = null;
+let scannerRunning = false;
+let html5QrCode = null;
+
+function onScanSuccess(decodedText){
+document.getElementById("result").innerText = "📱 "+decodedText;
+scannedUser = decodedText;
+}
+
+window.toggleScanner = async function(){
+
+const reader = document.getElementById("reader");
+const btn = document.getElementById("scanBtn");
+
+if(!scannerRunning){
+
+reader.style.display = "block";
+btn.innerText = "❌ Fermer Scanner";
+
+html5QrCode = new Html5Qrcode("reader");
+
+/* 🔥 caméra arrière */
+const cameras = await Html5Qrcode.getCameras();
+
+let backCamera = cameras.find(c =>
+c.label.toLowerCase().includes("back")
+) || cameras[0];
+
+try{
+await html5QrCode.start(
+backCamera.id,
+{ fps: 10, qrbox: 250 },
+onScanSuccess
+);
+}catch(e){
+alert("❌ Erreur caméra");
+console.error(e);
+}
+
+scannerRunning = true;
+
+}else{
+
+await html5QrCode.stop();
+reader.style.display = "none";
+btn.innerText = "📷 Ouvrir Scanner";
+
+scannerRunning = false;
+}
+};
+
+/* ===== DEPOT ===== */
+window.startDeposit = async function(){
+
+if(!scannedUser){
+alert("Scanne un QR d'abord");
+return;
+}
+
+let amount = parseFloat(prompt("Montant dépôt ?"));
+if(!amount || amount <= 0){
+alert("Montant invalide");
+return;
+}
+
+const userRef = ref(db,"users/"+scannedUser);
+const agentRef = ref(db,"agents/"+agent.phone);
+
+const userSnap = await get(userRef);
+const agentSnap = await get(agentRef);
+
+let userData = userSnap.val();
+let agentData = agentSnap.val();
+
+// 🔥 INIT
+if(!agentData.activityUsed) agentData.activityUsed = 0;
+
+// 🔥 BLOQUAGE PLAFOND
+if((agentData.activityUsed + amount) > agentData.plafond){
+alert("❌ Limite d'activité atteinte !");
+return;
+}
+
+// 🔥 VERIF SOLDE
+if(agentData.solde < amount){
+alert("❌ Solde insuffisant");
+return;
+}
+
+// 🔥 LOGIQUE
+agentData.solde -= amount;
+agentData.activityUsed += amount;
+
+userData.solde += amount;
+
+await update(userRef,userData);
+await update(agentRef,{
+solde:agentData.solde,
+activityUsed:agentData.activityUsed
+});
+
+// 🔥 HISTORIQUE GLOBAL
+await push(ref(db,"transactions"),{
+phone: scannedUser,
+type: "Depot",
+amount: amount,
+agent: agent.phone,
+date: new Date().toLocaleString()
+});
+
+alert("✅ Dépôt réussi");
+
+loadAgentBalance();
+loadMiniHistory();
+};
+
+/* ===== RETRAIT ===== */
+/* ===== RETRAIT (DEMANDE SECURISEE) ===== */
+window.startWithdraw = async function(){
+
+if(!scannedUser){
+alert("Scanne un QR d'abord");
+return;
+}
+
+let amount = parseFloat(prompt("Montant retrait ?"));
+if(!amount || amount <= 0){
+alert("Montant invalide");
+return;
+}
+
+const agentRef = ref(db,"agents/"+agent.phone);
+const userRef = ref(db,"users/"+scannedUser);
+
+const agentSnap = await get(agentRef);
+const userSnap = await get(userRef);
+
+let agentData = agentSnap.val();
+let userData = userSnap.val();
+
+// 🔥 INIT
+if(!agentData.activityUsed) agentData.activityUsed = 0;
+
+// 🔥 VERIF USER
+if(userData.solde < amount){
+alert("❌ Solde utilisateur insuffisant");
+return;
+}
+
+// 🔥 VERIF PLAFOND
+if((agentData.activityUsed + amount) > agentData.plafond){
+alert("❌ Limite d'activité atteinte !");
+return;
+}
+
+// 🔥 LOGIQUE
+userData.solde -= amount;
+agentData.solde += amount;
+agentData.activityUsed += amount;
+
+await update(userRef,userData);
+await update(agentRef,{
+solde:agentData.solde,
+activityUsed:agentData.activityUsed
+});
+
+// 🔥 TRANSACTION
+await push(ref(db,"transactions"),{
+phone: scannedUser,
+type: "Retrait",
+amount: -amount,
+agent: agent.phone,
+date: new Date().toLocaleString()
+});
+
+alert("✅ Retrait validé");
+
+loadAgentBalance();
+loadMiniHistory();
+};
+</script>
+
+</body>
+</html>
